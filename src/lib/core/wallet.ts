@@ -27,21 +27,22 @@ export const SUPPORTED_WALLETS = {
   WALLET_CONNECT: walletConnect
 };
 
-export class Wallet extends ExceptionHandler {
+export class Wallet {
   private static _instance: InstanceType<typeof Wallet>;
   address: string | undefined;
   public onboard: OnboardAPI | undefined;
   signer: providers.JsonRpcSigner | undefined | ethers.Signer;
   ethersProvider: providers.Web3Provider | undefined;
+  public exceptionHandler: ExceptionHandler;
 
   constructor(walletConfig: InitOptions) {
-    super();
-
     if (Wallet._instance) {
       return Wallet._instance;
     }
 
     Wallet._instance = this;
+
+    this.exceptionHandler = new ExceptionHandler();
 
     // assumes default that can and should be overridden
     this.onboard = Onboard({
@@ -91,13 +92,13 @@ export class Wallet extends ExceptionHandler {
         return true;
       } else {
         console.log('noWalletSelected');
-        this.handleError(
+        this.exceptionHandler.handleError(
           new Error('No wallet selected'),
           ExceptionHandler.Type.INTERACTION
         );
       }
     } catch (error) {
-      this.catchError(error);
+      this.exceptionHandler.catchError(error);
     }
   };
 
@@ -111,13 +112,13 @@ export class Wallet extends ExceptionHandler {
       if (success) {
         return true;
       } else {
-        this.handleError(
+        this.exceptionHandler.handleError(
           new Error('User rejected request'),
           ExceptionHandler.Type.INTERACTION
         );
       }
     } catch (e) {
-      this.catchError(e);
+      this.exceptionHandler.catchError(e);
     }
   };
 
@@ -125,7 +126,7 @@ export class Wallet extends ExceptionHandler {
     try {
       return await this.signer.signMessage(message);
     } catch (e) {
-      this.catchError(e);
+      this.exceptionHandler.catchError(e);
     }
   };
 

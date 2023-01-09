@@ -16,10 +16,12 @@ class NftValidationUtility extends HttpClient {
   public details: NFTUtility;
   public nfts: ValidNFT;
   public wallet: Wallet;
+  public exceptionHandler: ExceptionHandler;
 
   constructor() {
     super(`${API_URL}`);
     this._initializeRequestInterceptor();
+    this.exceptionHandler = new ExceptionHandler();
   }
   private _initializeRequestInterceptor = () => {
     this.instance.interceptors.request.use(this._handleRequest);
@@ -60,7 +62,7 @@ class NftValidationUtility extends HttpClient {
         await this.wallet.switchNetwork(this.details.network);
       } catch (e) {
         // todo: correctly handle this case
-        this.catchError(e);
+        this.exceptionHandler.catchError(e);
       }
     }
   }
@@ -93,7 +95,7 @@ class NftValidationUtility extends HttpClient {
       console.log('stored');
       return true;
     } catch (error) {
-      this.catchError(error);
+      this.exceptionHandler.catchError(error);
     }
   }
 
@@ -115,7 +117,7 @@ class NftValidationUtility extends HttpClient {
   //get message to sign
   public getMessage = async () => {
     if (!this.wallet.address) {
-      this.handleError(
+      this.exceptionHandler.handleError(
         new Error(
           'You need to be connected to wallet to be able to getMessage'
         ),
@@ -132,7 +134,7 @@ class NftValidationUtility extends HttpClient {
       );
       return res.message;
     } catch (e) {
-      this.catchError(e);
+      this.exceptionHandler.catchError(e);
     }
   };
 
