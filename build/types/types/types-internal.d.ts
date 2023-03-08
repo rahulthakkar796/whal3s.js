@@ -1,3 +1,4 @@
+import { NETWORKS } from '../core/networks';
 export interface Network {
     id: string;
     token: string;
@@ -10,7 +11,7 @@ export declare type NFTUtility = {
     created_at: string;
     updated_at: string;
     contract_address: string;
-    network: string;
+    network: keyof typeof NETWORKS;
     max_engagements: number;
     max_engagements_per_nft: string;
 };

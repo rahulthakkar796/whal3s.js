@@ -8,62 +8,73 @@ import {
 } from '../types/types-internal';
 import { API_URL } from '../utils/env';
 import { HttpClient } from '../utils/http-client';
+import ExceptionHandler from './exceptionHandler';
+
 class NftValidationUtility extends HttpClient {
-  public id: string;
+  private id: string;
   private apiKey: string;
-  private static classInstance?: NftValidationUtility;
-  public utility: NFTUtility;
+  public details: NFTUtility;
   public nfts: ValidNFT;
   public wallet: Wallet;
+  public exceptionHandler: ExceptionHandler;
 
   constructor() {
     super(`${API_URL}`);
     this._initializeRequestInterceptor();
+    this.exceptionHandler = new ExceptionHandler();
   }
   private _initializeRequestInterceptor = () => {
-    this.instance.interceptors.request.use(
-      this._handleRequest,
-      this._handleError
-    );
+    this.instance.interceptors.request.use(this._handleRequest);
   };
   private _handleRequest = (config: AxiosRequestConfig) => {
     config.headers['Authorization'] = `Bearer ${this.apiKey}`;
     return config;
   };
 
-  // returns the reusable encapsulated class instance
-  public static async getInstance(id: string, apiKey: string) {
-    if (!this.classInstance) {
-      this.classInstance = new NftValidationUtility();
-      this.classInstance.wallet = new Wallet();
-      this.classInstance.apiKey = apiKey;
-      this.classInstance.id = id;
-      this.classInstance.utility =
-        await this.classInstance.getValidationUtility();
-    }
-    return this.classInstance;
+  public static async createValidationUtility(
+    wallet: Wallet,
+    apiKey: string,
+    id: string
+  ) {
+    // assumes user can create multiple validation utilities in one app
+    const validationUtilityInstance = new NftValidationUtility();
+    validationUtilityInstance.wallet = wallet;
+    validationUtilityInstance.apiKey = apiKey;
+    validationUtilityInstance.id = id;
+    validationUtilityInstance.details =
+      await validationUtilityInstance.getValidationUtility();
+    return validationUtilityInstance;
   }
 
   public async connectWallet() {
-    try {
-      await this.wallet.connect(this.utility.network);
-      console.log('logged in adddress:', this.wallet.address);
-      console.log(await this.wallet.onboard.state.get());
-      this.nfts = await this.getAllNftWallet(this.wallet.address);
+    await this.wallet.connect(this.details.network);
+    console.log('logged in adddress:', this.wallet.address);
+
+    const isOnTheSameNetwork = await this.wallet.onSameNetwork(
+      this.details.network
+    );
+
+    if (isOnTheSameNetwork) {
+      this.nfts = await this.getAllNftWallet();
       console.log(this.nfts);
-    } catch (error) {
-      console.log(error);
+    } else {
+      try {
+        await this.wallet.switchNetwork(this.details.network);
+      } catch (e) {
+        // todo: correctly handle this case
+        this.exceptionHandler.catchError(e);
+      }
     }
   }
 
   public async claimNFT(reserve: boolean, nftId: string): Promise<boolean> {
     try {
       //step1: fetch the message to sign
-      const msg = await this.getMessage(this.wallet.address);
+      const msg = await this.getMessage();
       console.log('msg:', msg);
 
       //step2: ask user to sign the message
-      const signedMsgHash = await this.wallet.signMessage(msg.message);
+      const signedMsgHash = await this.wallet.signMessage(msg);
       console.log('signedMsg:', signedMsgHash);
       //params to reserve and store engagement
       const metadata = this.nfts.nfts[nftId].attributes.metadata;
@@ -84,8 +95,7 @@ class NftValidationUtility extends HttpClient {
       console.log('stored');
       return true;
     } catch (error) {
-      console.log('error:', error);
-      return false;
+      this.exceptionHandler.catchError(error);
     }
   }
 
@@ -99,17 +109,34 @@ class NftValidationUtility extends HttpClient {
     this.instance.get<NFTUtility>(`nft-validation-utilities/${this.id}`);
 
   //get all NFTs for wallet
-  public getAllNftWallet = (wallet: string) =>
+  public getAllNftWallet = () =>
     this.instance.get<ValidNFT>(
-      `nft-validation-utilities/${this.id}/wallet/${wallet}`
+      `nft-validation-utilities/${this.id}/wallet/${this.wallet.address}`
     );
 
   //get message to sign
-  public getMessage = (wallet: string) =>
-    this.instance.post<{ message: string }>(`signature-messages`, {
-      utility_id: this.id,
-      wallet_address: wallet
-    });
+  public getMessage = async () => {
+    if (!this.wallet.address) {
+      this.exceptionHandler.handleError(
+        new Error(
+          'You need to be connected to wallet to be able to getMessage'
+        ),
+        ExceptionHandler.Type.INTERACTION
+      );
+    }
+    try {
+      const res = await this.instance.post<{ message: string }>(
+        `signature-messages`,
+        {
+          utility_id: this.id,
+          wallet_address: this.wallet.address
+        }
+      );
+      return res.message;
+    } catch (e) {
+      this.exceptionHandler.catchError(e);
+    }
+  };
 
   //reserve NFT engagement
   public reserveEngagement = (params: EngagementRequest) =>

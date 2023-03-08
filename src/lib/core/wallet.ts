@@ -1,4 +1,8 @@
-import Onboard, { OnboardAPI } from '@web3-onboard/core';
+import Onboard, {
+  InitOptions,
+  OnboardAPI,
+  WalletState
+} from '@web3-onboard/core';
 import injectedModule from '@web3-onboard/injected-wallets';
 import walletConnectModule from '@web3-onboard/walletconnect';
 import { Bytes, ethers, providers } from 'ethers';
@@ -7,31 +11,40 @@ import {
   ETH_MAINNET,
   MATIC_MAINNET,
   MATIC_MUMBAI,
-  resolveNetwork
+  NETWORKS
 } from './networks';
 import { Network } from '../types/types-internal';
+import { asyncSome } from '../helpers';
+import ExceptionHandler from './exceptionHandler';
 
 const walletConnect = walletConnectModule();
-
 const injected = injectedModule();
 
+type NetworkArguments = Network | keyof typeof NETWORKS;
+
+export const SUPPORTED_WALLETS = {
+  INJECTED: injected,
+  WALLET_CONNECT: walletConnect
+};
+
 export class Wallet {
-  private static _instance: any;
-  debug = false;
+  private static _instance: InstanceType<typeof Wallet>;
   address: string | undefined;
   public onboard: OnboardAPI | undefined;
   signer: providers.JsonRpcSigner | undefined | ethers.Signer;
   ethersProvider: providers.Web3Provider | undefined;
+  public exceptionHandler: ExceptionHandler;
 
-  constructor() {
+  constructor(walletConfig: InitOptions) {
     if (Wallet._instance) {
       return Wallet._instance;
     }
-    Wallet._instance = this;
-  }
 
-  init = async () => {
-    //Planned feature: Onboard config should fit Utility and it's creator (Chains, Logo, color,...)
+    Wallet._instance = this;
+
+    this.exceptionHandler = new ExceptionHandler();
+
+    // assumes default that can and should be overridden
     this.onboard = Onboard({
       wallets: [injected, walletConnect],
       chains: [ETH_MAINNET, ETH_GOERLI, MATIC_MAINNET, MATIC_MUMBAI],
@@ -51,12 +64,18 @@ export class Wallet {
         mobile: {
           enabled: false
         }
-      }
-    });
-  };
+      },
 
-  connect = async (network: Network | string): Promise<boolean> => {
-    if (typeof network === 'string') network = resolveNetwork(network);
+      ...walletConfig
+    });
+  }
+
+  private getNetwork(network: NetworkArguments): Network {
+    return typeof network === 'string' ? NETWORKS[network] : network;
+  }
+
+  connect = async (network: NetworkArguments): Promise<boolean> => {
+    network = this.getNetwork(network);
 
     try {
       const wallets = await this.onboard.connectWallet();
@@ -73,19 +92,51 @@ export class Wallet {
         return true;
       } else {
         console.log('noWalletSelected');
-        throw 'No wallet selected';
-        // this.dispatch('noWalletSelected')
+        this.exceptionHandler.handleError(
+          new Error('No wallet selected'),
+          ExceptionHandler.Type.INTERACTION
+        );
       }
-    } catch (e) {
-      return false;
+    } catch (error) {
+      this.exceptionHandler.catchError(error);
     }
   };
-  switchNetwork = async (network: Network | string): Promise<boolean> => {
-    if (typeof network === 'string') network = resolveNetwork(network);
-    return this.onboard.setChain({ chainId: network.id });
+
+  public switchNetwork = async (
+    network: NetworkArguments
+  ): Promise<boolean> => {
+    network = this.getNetwork(network);
+
+    try {
+      const success = await this.onboard.setChain({ chainId: network.id });
+      if (success) {
+        return true;
+      } else {
+        this.exceptionHandler.handleError(
+          new Error('User rejected request'),
+          ExceptionHandler.Type.INTERACTION
+        );
+      }
+    } catch (e) {
+      this.exceptionHandler.catchError(e);
+    }
   };
-  signMessage = async (message: Bytes | string): Promise<string> => {
-    return this.signer.signMessage(message);
+
+  public signMessage = async (message: Bytes | string): Promise<string> => {
+    try {
+      return await this.signer.signMessage(message);
+    } catch (e) {
+      this.exceptionHandler.catchError(e);
+    }
+  };
+
+  public onSameNetwork = async (network: keyof typeof NETWORKS) => {
+    const wallets = this.onboard.state.get().wallets;
+
+    return asyncSome<WalletState>(wallets, async (wallet) => {
+      const chainId = await wallet.provider.request({ method: 'eth_chainId' });
+      return chainId === NETWORKS[network].id;
+    });
   };
 }
 export default Wallet;
